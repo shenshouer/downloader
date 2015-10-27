@@ -17,8 +17,7 @@ type(
 	ByteSize float64
 
 	FTPInfo struct {
-//		conn 		*ftp.ServerConn
-		conn 		*ftp.FTP
+		client 		*ftp.FTP
 		isLogin		bool
 		FtpServer	string
 		FtpUser		string
@@ -65,15 +64,15 @@ func main() {
 
 // 登陆FTP服务器
 func (f *FTPInfo) Login () (err error) {
-	f.conn = ftp.NewFTP(0)  // 1 for debugging
+	f.client = ftp.NewFTP(0)  // 1 for debugging
 	log.Println(fmt.Sprintf("[Info] try to connect ftp server[%s]", f.FtpServer))
-	if f.conn, err = f.conn.Connect(f.FtpServer, ftp.DefaultFtpPort); err != nil{
+	if _, err = f.client.Connect(f.FtpServer, ftp.DefaultFtpPort); err != nil{
 		log.Printf("[ERROR] connecting ftp server error: %v \n", err)
 		return
 	}
 	log.Println("[Info] connected success!")
 	log.Printf("[Info] try to login ftp server[%s] with password %s \n", f.FtpServer, f.FtpPassword)
-	if err = f.conn.Login(f.FtpUser, f.FtpPassword); err != nil{
+	if _, err = f.client.Login(f.FtpUser, f.FtpPassword, ""); err != nil{
 		log.Printf("[ERROR] Login to ftp server error: %v\n", err)
 		return
 	}
@@ -89,6 +88,7 @@ func (f *FTPInfo) Dowload(fileName string) (err error) {
 			return
 		}
 	}
+	defer f.client.Quit()
 
 	var tmpFile *os.File
 	log.Println("[Info] try to create the temp file to receive the download file!")
@@ -107,7 +107,7 @@ func (f *FTPInfo) Dowload(fileName string) (err error) {
 		}
 
 		var reader io.ReadCloser
-		if reader, err = f.conn.RetrFrom(downloadFile, uint64(size)); err != nil{
+		if reader, err = f.client.RetrFrom(downloadFile, uint64(size)); err != nil{
 			log.Printf("[ERROR] download file error %v \n", err)
 			return
 		}else{

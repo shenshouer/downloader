@@ -1,0 +1,69 @@
+Installing vsFTPd on CentOS
+
+Step 1: Installing the required packages
+
+yum install epel-release
+
+yum install vsftpd mysql mysql-server pam-mysql httpd php php-mysql php-mcrypt phpmyadmin -y
+
+service httpd start
+
+Step 2: Configuring the FTP server
+
+vi /etc/vsftpd/vsftpd.conf
+
+Change local_enable = no to local_enable = yes
+
+service mysqld start
+
+mysql_secure_installation
+
+mysql -uroot -p
+
+CREATE DATABASE vsftpd;
+
+CREATE TABLE `accounts` (
+`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY ,
+`username` VARCHAR( 30 ) NOT NULL ,
+`pass` VARCHAR( 50 ) NOT NULL ,
+UNIQUE (
+`username`
+)
+) ENGINE = MYISAM ;
+
+quit
+
+vi /etc/pam.d/vsftpd
+
+#%PAM-1.0
+auth required pam_mysql.so user=root passwd=123456 host=127.0.0.1 db=vsftpd table=accounts usercolumn=username passwdcolumn=pass     crypt=2
+account required pam_mysql.so user=root passwd=123456 host=127.0.0.1 db=vsftpd table=accounts usercolumn=username passwdcolumn=pass     crypt=2
+
+service vsftpd restart
+
+Step 3: Adding users
+
+useradd bob
+
+mysql -uroot -pyourmysqlrootpassword
+use vsftpd;
+INSERT INTO accounts (username, pass) VALUES('bob', PASSWORD('yourpasswordforbob'));
+quit;
+
+fix: 500 OOPS: cannot change directory:/home/bob
+setenforce 0
+/etc/sysconfig/selinux
+SELINUX=disabled
+
+
+Step 4: virtual user
+
+guest_enable=YES
+guest_username=bob
+virtual_use_local_privs=YES
+
+pam_service_name=vsftpd
+userlist_enable=YES
+tcp_wrappers=YES
+local_root=/home/bob
+

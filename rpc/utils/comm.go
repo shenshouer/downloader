@@ -1,7 +1,8 @@
-package main
+package comm
 
 type (
 	Person struct {
+		No 		int
 		Name 	string
 		Age 	int
 	}

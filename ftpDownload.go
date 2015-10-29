@@ -5,19 +5,21 @@
 package main
 
 import (
-	ftp "github.com/shenshouer/ftp4go"
+	"downloader/ftp"
 	"log"
 	"os"
 	"fmt"
-	"io/ioutil"
+//	"io/ioutil"
 	"io"
+	"bufio"
+	"time"
 )
 
 type(
 	ByteSize float64
 
 	FTPInfo struct {
-		client 		*ftp.FTP
+		client 		*ftp.ServerConn
 		isLogin		bool
 		FtpServer	string
 		FtpUser		string
@@ -40,14 +42,14 @@ const (
 	YB
 
 	max_thread 		= 10 						// 下载的最大线程数
-	Block_Size 		= 1 * MB					// 每个线程中间将下载文件分块,每块数据大小
+	Block_Size 		= 1 * KB					// 每个线程中间将下载文件分块,每块数据大小
 )
 
 func main() {
 	log.SetFlags(log.Flags()|log.Lshortfile)
 	// 下载信息
 	downloadFileName 	:= "Firefox-latest.dmg"
-	ftpServer 			:= "172.8.4.101"
+	ftpServer 			:= "172.8.4.101:21"
 	ftpUser 			:= "bob"
 	ftpPassword 		:= "p@ssw0rd"
 
@@ -64,15 +66,14 @@ func main() {
 
 // 登陆FTP服务器
 func (f *FTPInfo) Login () (err error) {
-	f.client = ftp.NewFTP(0)  // 1 for debugging
 	log.Println(fmt.Sprintf("[Info] try to connect ftp server[%s]", f.FtpServer))
-	if _, err = f.client.Connect(f.FtpServer, ftp.DefaultFtpPort); err != nil{
+	if f.client, err = ftp.Connect(f.FtpServer); err != nil{
 		log.Printf("[ERROR] connecting ftp server error: %v \n", err)
 		return
 	}
 	log.Println("[Info] connected success!")
 	log.Printf("[Info] try to login ftp server[%s] with password %s \n", f.FtpServer, f.FtpPassword)
-	if _, err = f.client.Login(f.FtpUser, f.FtpPassword, ""); err != nil{
+	if err = f.client.Login(f.FtpUser, f.FtpPassword); err != nil{
 		log.Printf("[ERROR] Login to ftp server error: %v\n", err)
 		return
 	}
@@ -89,6 +90,12 @@ func (f *FTPInfo) Dowload(fileName string) (err error) {
 		}
 	}
 	defer f.client.Quit()
+	var size int64
+	size, err = f.client.Size(BASE_FTP_PATH+fileName)
+	if err != nil{
+		log.Println("FTP Server 不支持 size操作", err)
+	}
+	log.Printf("下载文件大小为%d \n", size)
 
 	var tmpFile *os.File
 	log.Println("[Info] try to create the temp file to receive the download file!")
@@ -111,21 +118,52 @@ func (f *FTPInfo) Dowload(fileName string) (err error) {
 			log.Printf("[ERROR] download file error %v \n", err)
 			return
 		}else{
+			defer reader.Close()
 			log.Println("[Info] start download ...")
-			var databytes []byte
-			if databytes, err = ioutil.ReadAll(reader); err != nil{
-				log.Printf("[ERROR] occured error when downloading file. err:%v\n", err)
-				return
-			}
-			log.Println("[Info] download success!")
+//			log.Println("发送终止下载命令...")
+//			if err := f.client.Abort(); err != nil{
+//				log.Println("终止失败", err)
+//			}
 
+			bufReader := bufio.NewReaderSize(reader, Block_Size)
+			s := make([]byte, Block_Size)
 			var n int
-			if n, err = tmpFile.WriteAt(databytes, size); err != nil{
-				log.Printf("[ERROR] occured error when saving the download file, err:%v\n", err)
-				return
+			for{
+				time.Sleep(1*time.Second)
+				n, err = bufReader.Read(s)
+				if _, err1 := tmpFile.Write(s[:n]); err1 != nil{
+					log.Println("文件写入失败", err1)
+					return err1
+				}
+				tmpFile.Sync()
+
+				if err != nil{
+					if err != io.EOF{
+						log.Println("读取数据出错", err)
+						break
+					}
+					log.Println("1文件下载完成")
+				}
+				log.Println("2文件下载完成")
 			}
 
-			log.Printf("[Info] save file success! file path:%s, file size:%d",tmpFile.Name(), n)
+//			var databytes []byte
+//			if databytes, err = ioutil.ReadAll(reader); err != nil{
+//				log.Printf("[ERROR] occured error when downloading file. err:%v\n", err)
+//				if databytes == nil && len(databytes) == 0{
+//					return
+//				}
+//			}
+//			log.Println("[Info] download success!")
+//
+//			var n int
+//			if n, err = tmpFile.WriteAt(databytes, size); err != nil{
+//				log.Printf("[ERROR] occured error when saving the download file, err:%v\n", err)
+//				return
+//			}
+//			tmpFile.Sync()
+//
+//			log.Printf("[Info] save file success! file path:%s, file size:%d",tmpFile.Name(), n)
 		}
 	}
 	return

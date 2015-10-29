@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"log"
 )
 
 // EntryType describes the different types of an Entry.
@@ -237,8 +238,15 @@ func (c *ServerConn) openDataConn() (net.Conn, error) {
 
 	// Build the new net address string
 	addr := net.JoinHostPort(c.host, strconv.Itoa(port))
+	log.Println("Try and get bytes via connection for remote address:", addr)
+	l,err := net.Listen("tcp", addr)
+	if err != nil{
+		return nil, err
+	}
+	defer l.Close()
 
-	return net.DialTimeout("tcp", addr, c.timeout)
+	//return net.DialTimeout("tcp", addr, c.timeout)
+	return l.Accept()
 }
 
 // cmd is a helper function to execute a command and check for the expected FTP
@@ -600,6 +608,24 @@ func (c *ServerConn) StorFrom(path string, r io.Reader, offset uint64) error {
 
 	_, _, err = c.conn.ReadResponse(StatusClosingDataConnection)
 	return err
+}
+
+// Abort ABOR
+func (c *ServerConn) Abort() error {
+	_, _, err := c.cmd(StatusActionAborted, "ABOR")
+	return err
+}
+
+func (c *ServerConn) Size(path string) (size int64, err error) {
+	sizeStr := "0"
+	_, sizeStr, err = c.cmd(StatusFile, "SIZE %s", path)
+	if err != nil {
+		return
+	}
+
+	size, err = strconv.ParseInt(sizeStr, 10, 0)
+
+	return
 }
 
 // Rename renames a file on the remote FTP server.

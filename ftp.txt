@@ -55,6 +55,11 @@ setenforce 0
 /etc/sysconfig/selinux
 SELINUX=disabled
 
+or
+
+setsebool -P ftp_home_dir 1
+
+
 
 Step 4: virtual user
 

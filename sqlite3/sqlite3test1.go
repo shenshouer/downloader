@@ -6,7 +6,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"time"
-	"github.com/shenshouer/structs"
+	"github.com/fatih/structs"
 	"strings"
 	"reflect"
 )
@@ -27,8 +27,6 @@ type(
 
 var(
 	db *sql.DB
-	typeRegistry = make(map[string]reflect.Type)	// 用于orm查询时返回对应的struct实体
-
 	sql_create_userinfo = `
 	CREATE TABLE IF NOT EXISTS userinfo (
 		uid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +39,6 @@ var(
 func init() {
 	log.SetFlags(log.Flags()|log.Lshortfile)
 
-	Registry(new(UserInfo))
 	var err error
 	db, err = sql.Open("sqlite3", "./sqlite3test1.db")
 	if err != nil{
@@ -49,163 +46,168 @@ func init() {
 	}
 
 	// create tables
-	if result, err := db.Exec(sql_create_userinfo); err != nil{
+	if _, err := db.Exec(sql_create_userinfo); err != nil{
 		log.Fatal(err)
-	}else{
-		log.Println(result)
 	}
 }
 
 func main() {
+	var id int64  // use for test update
 	// insert
-//	ui := &UserInfo{
-//		Username: "astaxie",
-//		Department: "研发部门",
-//		Created: time.Now(),
-//	}
-//	res, err := Save(db, ui)
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	id, err := res.LastInsertId()
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	fmt.Println(id)
-	// query
-	entities, err := Query(db, new(UserInfo))
-	log.Println(err)
-	log.Println(entities)
+	ui := &UserInfo{
+		Username: "astaxie",
+		Department: "研发部门",
+		Created: time.Now(),
+	}
+	if res, err := Save(db, ui);err != nil{
+		log.Fatal(err)
+	}else{
+		id, err = res.LastInsertId()
+		if err != nil{
+			log.Fatal(err)
+		}
+		log.Println(id)
+	}
 
-//	ui = &UserInfo{
-//		Uid: id,
-//		Username: "shenshouer",
-//		Department: "GT-基础部门",
-//	}
-//
-//	// update
-//	_, err = Update(db, ui)
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	affect, err := res.RowsAffected()
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	fmt.Println(affect)
-//
-//	// query
-//	rows, err = db.Query("SELECT * FROM userinfo")
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	for rows.Next() {
-//		ui := &UserInfo{}
-//		err = rows.Scan(&ui.Uid, &ui.Username, &ui.Department, &ui.Created)
-//		if err != nil{
-//			log.Fatal(err)
-//		}
-//		log.Println(ui)
-//	}
+	// query
+	if entities, err := Query(db, new(UserInfo)); err != nil{
+		log.Fatal(err)
+	}else{
+		for i, entity := range entities{
+			log.Println(i, entity)
+		}
+	}
+
+	ui = &UserInfo{
+		Uid: id,
+		Username: "shenshouer",
+		Department: "GT-基础部门",
+	}
+
+	// update
+	if res, err := Update(db, ui);err != nil{
+		log.Fatal(err)
+	}else{
+		affect, err := res.RowsAffected()
+		if err != nil{
+			log.Fatal(err)
+		}
+
+		log.Println(affect)
+	}
+
+	// query
+	if entities, err := Query(db, new(UserInfo)); err != nil{
+		log.Fatal(err)
+	}else{
+		for i, entity := range entities{
+			log.Println(i, entity)
+		}
+	}
 
 	// delete
-//	stmt, err = db.Prepare("delete from userinfo where uid=?")
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	res, err = stmt.Exec(id)
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	affect, err = res.RowsAffected()
-//	if err != nil{
-//		log.Fatal(err)
-//	}
-//
-//	fmt.Println(affect)
+	if res, err := Delete(&UserInfo{Uid:id}); err != nil{
+		log.Fatal(err)
+	}else{
+		affect, err := res.RowsAffected()
+		if err != nil{
+			log.Fatal(err)
+		}
+
+		log.Println(affect)
+	}
+
 
 	defer db.Close()
 
 }
 
+// TODO 根据已经设置值的字段删除相关记录
+// 目前只支持主键删除
+func Delete(entity IEntity)(sql.Result, error){
+	v := reflect.ValueOf(entity)
+	if destEntity, ok := v.Interface().(IEntity); ok { // 类型断言成 IEntity
+		destEntityValue := reflect.ValueOf(destEntity)
+		destEntityValueType := destEntityValue.Type()
+		if destEntityValueType.Kind() != reflect.Ptr || destEntityValueType.Elem().Kind() != reflect.Struct {
+			panic(fmt.Errorf("dest must be pointer to struct; got %T", destEntityValueType))
+		}
+
+		sql := ""
+		distElem := v.Elem()
+		numField := distElem.NumField()
+		values := make([]interface{}, 0)
+		for i:=0; i < numField; i++{
+			tags := strings.Split(distElem.Type().Field(i).Tag.Get("db"), ",")
+			if len(tags) == 2{
+				sql = fmt.Sprintf("DELETE FROM %s WHERE %s=?", entity.TableName() ,tags[0])
+				values = append(values, distElem.Field(i).Interface())
+			}
+		}
+
+		log.Println(sql, values)
+		stmt, err := db.Prepare(sql)
+		if err != nil{
+			return nil, err
+		}
+
+		return stmt.Exec(values...)
+	}
+
+	return nil, fmt.Errorf("entity must be implemete IEntity")
+}
+
+// TODO 根据已配置的字段查询相关记录
+// 目前只支持根据主键查询
 func Query(db *sql.DB, entity IEntity)([]IEntity, error){
-	structName := structs.Name(entity)
-	var registryStruct reflect.Type
-	var ok bool
-	if registryStruct, ok = typeRegistry[structName]; !ok{
-		return nil, fmt.Errorf("%s can not be registried, pleace registry before used!", structName)
-	}
+	v := reflect.Zero(reflect.TypeOf(entity)) // 获取IEntity类型的零值指针
+	if destEntity, ok := v.Interface().(IEntity); ok{ // 类型断言成 IEntity
+		destEntityValueType := reflect.ValueOf(destEntity).Type()
+		if destEntityValueType.Kind() != reflect.Ptr || destEntityValueType.Elem().Kind() != reflect.Struct {
+			panic(fmt.Errorf("dest must be pointer to struct; got %T", destEntityValueType))
+		}
 
-	querySql := fmt.Sprintf("SELECT * FROM %s", entity.TableName())
-	rows, err := db.Query(querySql)
-	if err != nil{
-		return nil, err
-	}
+		// 组装sql
+		querySql := fmt.Sprintf("SELECT * FROM %s", entity.TableName())
+		rows, err := db.Query(querySql)
+		if err != nil{
+			return nil, err
+		}
 
-	entities := make([]IEntity, 0)
-	columns, err := rows.Columns()
-	if err != nil{
-		return nil, err
-	}
+		entities := make([]IEntity, 0)
+		columns, err := rows.Columns()
+		if err != nil{
+			return nil, err
+		}
 
-	colNum := len(columns)
-	var values = make([]interface{}, colNum)
-	for i, _ := range values {
-		var ii interface{}
-		values[i] = &ii
-	}
-
-	v := reflect.Zero(registryStruct)
-	for rows.Next() {
-//		v := reflect.New(registryStruct).Elem()
-		if tmp, ok := v.Interface().(IEntity); ok{
-			tmp = tmp.Initialize()
+		for rows.Next() {
+			values := make([]interface{},0)
+			tmp := destEntity.Initialize()		// 创建新的指针实体
 			val := reflect.ValueOf(tmp).Elem()
-//			tmpType := reflect.TypeOf(val)
 			numFiled := val.NumField()
 			for i := 0; i < numFiled; i++{
 				fieldValue := val.Field(i)
-				fieldValueType := fieldValue.Type()
 				fieldType := val.Type().Field(i)
-				log.Println(fieldValueType, fieldValue, fieldType.Tag)
+				tags := strings.Split(fieldType.Tag.Get("db"), ",") // 去掉主键tag pk标识
+				if fieldValue.CanSet(){
+					for _, columnName := range columns{
+						if len(tags) >= 1 && tags[0] == columnName{
+							values = append(values, fieldValue.Addr().Interface())
+						}
+					}
+				}
 			}
-
+			err := rows.Scan(values...)
+			if err != nil{
+				return nil, err
+			}
 			entities = append(entities, tmp)
 		}
-
-
-//		log.Println(v.Kind())
-//		log.Println("==>", tmp, ok)
-//		log.Println(tmp)
-//		s := structs.New(tmp)
-//		err := rows.Scan(values...)
-//		if err != nil{
-//			return nil, err
-//		}
-//		for i, fieldName := range columns{
-//			fields := s.Fields()
-//			for _, field := range fields{
-//				log.Println(fieldName,"field", field.Name(), "tag" , strings.Split(field.Tag("db"), ",")[0])
-//				if strings.Split(field.Tag("db"), ",")[0] == fieldName{
-//					log.Println(fieldName, strings.Split(field.Tag("db"), ",")[0], values[i])
-//					field.Set(values[i])
-//					log.Println("=====>> field.Value", field.Value())
-//					break
-//				}
-//			}
-//		}
-
-//		log.Println(tmp)
-//		entities = append(entities, tmp)
+		return entities, nil
 	}
-	return entities, nil
+
+	err := fmt.Errorf("entity must implemetes interface IEntity ")
+	return nil, err
 }
 
 func Update(db *sql.DB, entity IEntity) (sql.Result, error){
@@ -261,7 +263,6 @@ func Update(db *sql.DB, entity IEntity) (sql.Result, error){
 	}
 
 	return res, nil
-//	return nil, nil
 }
 
 func Save(db *sql.DB, entity IEntity) (sql.Result, error){
@@ -319,19 +320,5 @@ func (*UserInfo) TableName() string {
 // 初始化当前指针,并将实体所有属性赋予零值
 func (ui *UserInfo) Initialize() IEntity {
 	ui = &UserInfo{}
-	log.Println(ui)
 	return ui
-}
-
-// 注册需要用到ORM的实体
-func Registry(v interface{}){
-	if _, ok := v.(IEntity); !ok{
-		panic("Registry struce must be implement the interface of IEntity")
-	}
-	structName := structs.Name(v)
-	if _, ok := typeRegistry[structName]; ok{
-		panic(fmt.Sprintf("%s has registried!"))
-	}else{
-		typeRegistry[structName] = reflect.TypeOf(v)
-	}
 }
